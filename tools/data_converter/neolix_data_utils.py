@@ -184,7 +184,7 @@ def get_neolix_image_info(path,
         pc_info = {'num_features': 4}
         calib_info = {}
 
-        # image_info = {'image_idx': idx}
+        image_info = {'image_idx': idx}
         annotations = None
         if velodyne:
             pc_info['velodyne_path'] = get_velodyne_path(
@@ -202,7 +202,7 @@ def get_neolix_image_info(path,
             if relative_path:
                 label_path = str(root_path / label_path)
             annotations = get_label_anno(label_path)
-        # info['image'] = image_info
+        info['image'] = image_info
         info['point_cloud'] = pc_info
         # if calib:
         #     calib_path = get_calib_path(

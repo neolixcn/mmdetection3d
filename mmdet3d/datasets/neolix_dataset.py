@@ -60,7 +60,7 @@ class NeolixDataset(Custom3DDataset):
                  box_type_3d='LiDAR',
                  filter_empty_gt=True,
                  test_mode=False,
-                 pcd_limit_range=[0, -40, -3, 70.4, 40, 0.0]):
+                 pcd_limit_range=[-24, -24, -1.5, 24, 24, 2.5]):
         super().__init__(
             data_root=data_root,
             ann_file=ann_file,
@@ -110,14 +110,15 @@ class NeolixDataset(Custom3DDataset):
         """
         info = self.data_infos[index]
         sample_idx = info['image']['image_idx']
-        img_filename = os.path.join(self.data_root,
-                                    info['image']['image_path'])
-
+        # img_filename = os.path.join(self.data_root,
+        #                             info['image']['image_path'])
+        img_filename = None
         # TODO: consider use torch.Tensor only
-        rect = info['calib']['R0_rect'].astype(np.float32)
-        Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
-        P2 = info['calib']['P2'].astype(np.float32)
-        lidar2img = P2 @ rect @ Trv2c
+        # rect = info['calib']['R0_rect'].astype(np.float32)
+        # Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
+        # P2 = info['calib']['P2'].astype(np.float32)
+        # lidar2img = P2 @ rect @ Trv2c
+        lidar2img = None
 
         pts_filename = self._get_pts_filename(sample_idx)
         input_dict = dict(
@@ -151,8 +152,8 @@ class NeolixDataset(Custom3DDataset):
         """
         # Use index to get the annos, thus the evalhook could also use this api
         info = self.data_infos[index]
-        rect = info['calib']['R0_rect'].astype(np.float32)
-        Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
+        # rect = info['calib']['R0_rect'].astype(np.float32)
+        # Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
 
         annos = info['annos']
         # we need other objects to avoid collision when sample
@@ -161,12 +162,14 @@ class NeolixDataset(Custom3DDataset):
         dims = annos['dimensions']
         rots = annos['rotation_y']
         gt_names = annos['name']
-        gt_bboxes_3d = np.concatenate([loc, dims, rots[..., np.newaxis]],
-                                      axis=1).astype(np.float32)
+        # gt_bboxes_3d = np.concatenate([loc, dims, rots[..., np.newaxis]],
+        #                               axis=1).astype(np.float32)
 
         # convert gt_bboxes_3d to velodyne coordinates
-        gt_bboxes_3d = CameraInstance3DBoxes(gt_bboxes_3d).convert_to(
-            self.box_mode_3d, np.linalg.inv(rect @ Trv2c))
+        # gt_bboxes_3d = CameraInstance3DBoxes(gt_bboxes_3d).convert_to(
+        #     self.box_mode_3d, np.linalg.inv(rect @ Trv2c))
+        l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]
+        gt_bboxes_3d = np.concatenate([loc, w, l, h, rots[..., np.newaxis]], axis=1)
         gt_bboxes = annos['bbox']
 
         selected = self.drop_arrays_by_name(gt_names, ['DontCare'])
@@ -282,12 +285,12 @@ class NeolixDataset(Custom3DDataset):
                         results_, self.CLASSES, pklfile_prefix_,
                         submission_prefix_)
                 else:
-                    result_files_ = self.bbox2result_kitti(
+                    result_files_ = self.bbox2result_neolix(
                         results_, self.CLASSES, pklfile_prefix_,
                         submission_prefix_)
                 result_files[name] = result_files_
         else:
-            result_files = self.bbox2result_kitti(outputs, self.CLASSES,
+            result_files = self.bbox2result_neolix(outputs, self.CLASSES,
                                                   pklfile_prefix,
                                                   submission_prefix)
         return result_files, tmp_dir
@@ -356,7 +359,7 @@ class NeolixDataset(Custom3DDataset):
             self.show(results, out_dir)
         return ap_dict
 
-    def bbox2result_kitti(self,
+    def bbox2result_neolix(self,
                           net_outputs,
                           class_names,
                           pklfile_prefix=None,
@@ -625,37 +628,40 @@ class NeolixDataset(Custom3DDataset):
                 label_preds=np.zeros([0, 4]),
                 sample_idx=sample_idx)
 
-        rect = info['calib']['R0_rect'].astype(np.float32)
-        Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
-        P2 = info['calib']['P2'].astype(np.float32)
-        img_shape = info['image']['image_shape']
-        P2 = box_preds.tensor.new_tensor(P2)
+        # rect = info['calib']['R0_rect'].astype(np.float32)
+        # Trv2c = info['calib']['Tr_velo_to_cam'].astype(np.float32)
+        # P2 = info['calib']['P2'].astype(np.float32)
+        # img_shape = info['image']['image_shape']
+        # P2 = box_preds.tensor.new_tensor(P2)
 
-        box_preds_camera = box_preds.convert_to(Box3DMode.CAM, rect @ Trv2c)
+        # box_preds_camera = box_preds.convert_to(Box3DMode.CAM, rect @ Trv2c)
 
-        box_corners = box_preds_camera.corners
-        box_corners_in_image = points_cam2img(box_corners, P2)
+        # box_corners = box_preds_camera.corners
+        # box_corners_in_image = points_cam2img(box_corners, P2)
         # box_corners_in_image: [N, 8, 2]
-        minxy = torch.min(box_corners_in_image, dim=1)[0]
-        maxxy = torch.max(box_corners_in_image, dim=1)[0]
-        box_2d_preds = torch.cat([minxy, maxxy], dim=1)
+        # minxy = torch.min(box_corners_in_image, dim=1)[0]
+        # maxxy = torch.max(box_corners_in_image, dim=1)[0]
+        # box_2d_preds = torch.cat([minxy, maxxy], dim=1)
         # Post-processing
         # check box_preds_camera
-        image_shape = box_preds.tensor.new_tensor(img_shape)
-        valid_cam_inds = ((box_preds_camera.tensor[:, 0] < image_shape[1]) &
-                          (box_preds_camera.tensor[:, 1] < image_shape[0]) &
-                          (box_preds_camera.tensor[:, 2] > 0) &
-                          (box_preds_camera.tensor[:, 3] > 0))
+        # image_shape = box_preds.tensor.new_tensor(img_shape)
+        # valid_cam_inds = ((box_preds_camera.tensor[:, 0] < image_shape[1]) &
+        #                   (box_preds_camera.tensor[:, 1] < image_shape[0]) &
+        #                   (box_preds_camera.tensor[:, 2] > 0) &
+        #                   (box_preds_camera.tensor[:, 3] > 0))
         # check box_preds
         limit_range = box_preds.tensor.new_tensor(self.pcd_limit_range)
         valid_pcd_inds = ((box_preds.center > limit_range[:3]) &
                           (box_preds.center < limit_range[3:]))
-        valid_inds = valid_cam_inds & valid_pcd_inds.all(-1)
+        # valid_inds = valid_cam_inds & valid_pcd_inds.all(-1)
+        valid_inds = valid_pcd_inds.all(-1)
 
         if valid_inds.sum() > 0:
             return dict(
-                bbox=box_2d_preds[valid_inds, :].numpy(),
-                box3d_camera=box_preds_camera[valid_inds].tensor.numpy(),
+                # bbox=box_2d_preds[valid_inds, :].numpy(),
+                bbox=np.zeros([0, 4]),
+                # box3d_camera=box_preds_camera[valid_inds].tensor.numpy(),
+                box3d_camera=np.zeros([0, 7]),
                 box3d_lidar=box_preds[valid_inds].tensor.numpy(),
                 scores=scores[valid_inds].numpy(),
                 label_preds=labels[valid_inds].numpy(),
