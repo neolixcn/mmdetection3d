@@ -45,19 +45,19 @@ def _calculate_num_points_in_gt(data_path,
     for info in mmcv.track_iter_progress(infos):
         pc_info = info['point_cloud']
         image_info = info['image']
-        calib = info['calib']
+        # calib = info['calib']
         if relative_path:
             v_path = str(Path(data_path) / pc_info['velodyne_path'])
         else:
             v_path = pc_info['velodyne_path']
         points_v = np.fromfile(
             v_path, dtype=np.float32, count=-1).reshape([-1, num_features])
-        rect = calib['R0_rect']
-        Trv2c = calib['Tr_velo_to_cam']
-        P2 = calib['P2']
-        if remove_outside:
-            points_v = box_np_ops.remove_outside_points(
-                points_v, rect, Trv2c, P2, image_info['image_shape'])
+        # rect = calib['R0_rect']
+        # Trv2c = calib['Tr_velo_to_cam']
+        # P2 = calib['P2']
+        # if remove_outside:
+        #     points_v = box_np_ops.remove_outside_points(
+        #         points_v, rect, Trv2c, P2, image_info['image_shape'])
 
         # points_v = points_v[points_v[:, 0] > 0]
         annos = info['annos']
@@ -68,8 +68,10 @@ def _calculate_num_points_in_gt(data_path,
         rots = annos['rotation_y'][:num_obj]
         gt_boxes_camera = np.concatenate([loc, dims, rots[..., np.newaxis]],
                                          axis=1)
-        gt_boxes_lidar = box_np_ops.box_camera_to_lidar(
-            gt_boxes_camera, rect, Trv2c)
+        # gt_boxes_lidar = box_np_ops.box_camera_to_lidar(
+        #     gt_boxes_camera, rect, Trv2c)
+        l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]
+        gt_boxes_lidar = np.concatenate([loc, w, l, h, rots[..., np.newaxis]], axis=1)
         indices = box_np_ops.points_in_rbbox(points_v[:, :3], gt_boxes_lidar)
         num_points_in_gt = indices.sum(0)
         num_ignored = len(annos['dimensions']) - num_obj

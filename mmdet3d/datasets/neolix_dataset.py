@@ -9,7 +9,7 @@ from os import path as osp
 
 from mmdet.datasets import DATASETS
 from ..core import show_result
-from ..core.bbox import Box3DMode, CameraInstance3DBoxes, points_cam2img
+from ..core.bbox import Box3DMode, CameraInstance3DBoxes, points_cam2img, LiDARInstance3DBoxes
 from .custom_3d import Custom3DDataset
 
 
@@ -169,7 +169,8 @@ class NeolixDataset(Custom3DDataset):
         # gt_bboxes_3d = CameraInstance3DBoxes(gt_bboxes_3d).convert_to(
         #     self.box_mode_3d, np.linalg.inv(rect @ Trv2c))
         l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]
-        gt_bboxes_3d = np.concatenate([loc, w, l, h, rots[..., np.newaxis]], axis=1)
+        gt_bboxes_3d_np = np.concatenate([loc, w, l, h, rots[..., np.newaxis]], axis=1)
+        gt_bboxes_3d = LiDARInstance3DBoxes(torch.from_numpy(gt_bboxes_3d_np))
         gt_bboxes = annos['bbox']
 
         selected = self.drop_arrays_by_name(gt_names, ['DontCare'])
@@ -324,7 +325,7 @@ class NeolixDataset(Custom3DDataset):
             dict[str, float]: Results of each evaluation metric.
         """
         result_files, tmp_dir = self.format_results(results, pklfile_prefix)
-        from mmdet3d.core.evaluation import kitti_eval
+        from mmdet3d.core.evaluation import neolix_eval
         gt_annos = [info['annos'] for info in self.data_infos]
 
         if isinstance(result_files, dict):
@@ -333,7 +334,7 @@ class NeolixDataset(Custom3DDataset):
                 eval_types = ['bbox', 'bev', '3d']
                 if 'img' in name:
                     eval_types = ['bbox']
-                ap_result_str, ap_dict_ = kitti_eval(
+                ap_result_str, ap_dict_ = neolix_eval(
                     gt_annos,
                     result_files_,
                     self.CLASSES,
@@ -346,10 +347,10 @@ class NeolixDataset(Custom3DDataset):
 
         else:
             if metric == 'img_bbox':
-                ap_result_str, ap_dict = kitti_eval(
+                ap_result_str, ap_dict = neolix_eval(
                     gt_annos, result_files, self.CLASSES, eval_types=['bbox'])
             else:
-                ap_result_str, ap_dict = kitti_eval(gt_annos, result_files,
+                ap_result_str, ap_dict = neolix_eval(gt_annos, result_files,
                                                     self.CLASSES)
             print_log('\n' + ap_result_str, logger=logger)
 
@@ -389,7 +390,7 @@ class NeolixDataset(Custom3DDataset):
             annos = []
             info = self.data_infos[idx]
             sample_idx = info['image']['image_idx']
-            image_shape = info['image']['image_shape'][:2]
+            # image_shape = info['image']['image_shape'][:2]
 
             box_dict = self.convert_valid_bboxes(pred_dicts, info)
             if len(box_dict['bbox']) > 0:
