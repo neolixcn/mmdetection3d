@@ -47,7 +47,7 @@ class NeolixDataset(Custom3DDataset):
         pcd_limit_range (list): The range of point cloud used to filter
             invalid predicted boxes. Default: [0, -40, -3, 70.4, 40, 0.0].
     """
-    CLASSES = ('vehicle', 'pedestrian', 'cyclist', 'unknown')
+    CLASSES = ('Vehicle', 'Pedestrian', 'Cyclist', 'Unknown')
 
     def __init__(self,
                  data_root,
@@ -415,8 +415,8 @@ class NeolixDataset(Custom3DDataset):
                 for box, box_lidar, bbox, score, label in zip(
                         box_preds, box_preds_lidar, box_2d_preds, scores,
                         label_preds):
-                    bbox[2:] = np.minimum(bbox[2:], image_shape[::-1])
-                    bbox[:2] = np.maximum(bbox[:2], [0, 0])
+                    # bbox[2:] = np.minimum(bbox[2:], image_shape[::-1])
+                    # bbox[:2] = np.maximum(bbox[:2], [0, 0])
                     anno['name'].append(class_names[int(label)])
                     anno['truncated'].append(0.0)
                     anno['occluded'].append(0)
@@ -636,6 +636,10 @@ class NeolixDataset(Custom3DDataset):
         # P2 = box_preds.tensor.new_tensor(P2)
 
         # box_preds_camera = box_preds.convert_to(Box3DMode.CAM, rect @ Trv2c)
+        loc = box_preds.tensor[:, 0:3]
+        w, l, h, rots = box_preds.tensor[:, 3:4], box_preds.tensor[:, 4:5], box_preds.tensor[:, 5:6], box_preds.tensor[:, 6:7]
+        box_preds_camera_np = np.concatenate([loc, l, h, w, rots], axis=1)
+        box_preds_camera = CameraInstance3DBoxes(torch.from_numpy(box_preds_camera_np))
 
         # box_corners = box_preds_camera.corners
         # box_corners_in_image = points_cam2img(box_corners, P2)
@@ -660,9 +664,8 @@ class NeolixDataset(Custom3DDataset):
         if valid_inds.sum() > 0:
             return dict(
                 # bbox=box_2d_preds[valid_inds, :].numpy(),
-                bbox=np.zeros([0, 4]),
-                # box3d_camera=box_preds_camera[valid_inds].tensor.numpy(),
-                box3d_camera=np.zeros([0, 7]),
+                bbox=np.zeros([box_preds_camera[valid_inds].tensor.shape[0], 4]),
+                box3d_camera=box_preds_camera[valid_inds].tensor.numpy(),
                 box3d_lidar=box_preds[valid_inds].tensor.numpy(),
                 scores=scores[valid_inds].numpy(),
                 label_preds=labels[valid_inds].numpy(),

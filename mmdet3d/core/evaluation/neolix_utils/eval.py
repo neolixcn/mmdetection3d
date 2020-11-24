@@ -26,7 +26,7 @@ def get_thresholds(scores: np.ndarray, num_gt, num_sample_pts=41):
 
 
 def clean_data(gt_anno, dt_anno, current_class, difficulty):
-    CLASS_NAMES = ['vehicle', 'pedestrian', 'cyclist', 'unknown']
+    CLASS_NAMES = ['Vehicle', 'Pedestrian', 'Cyclist', 'Unknown']
     MIN_HEIGHT = [40, 25, 25]
     MAX_OCCLUSION = [0, 1, 2]
     MAX_TRUNCATION = [0.15, 0.3, 0.5]
