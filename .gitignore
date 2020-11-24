@@ -128,3 +128,4 @@ exps/
 /data/sunrgbd/OFFICIAL_SUNRGBD/
 *.obj
 *.ply
+*.bin
