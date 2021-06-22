@@ -22,6 +22,7 @@ file_client_args = dict(backend='disk')
 train_pipeline = [
     dict(
         type='LoadPointsFromFile',
+        coord_type='LIDAR',
         load_dim=4,
         use_dim=4,
         file_client_args=file_client_args),
@@ -51,6 +52,7 @@ train_pipeline = [
 test_pipeline = [
     dict(
         type='LoadPointsFromFile',
+        coord_type='LIDAR',
         load_dim=4,
         use_dim=4,
         file_client_args=file_client_args),
@@ -74,6 +76,21 @@ test_pipeline = [
                 with_label=False),
             dict(type='Collect3D', keys=['points'])
         ])
+]
+# construct a pipeline for data and gt loading in show function
+# please keep its loading function consistent with test_pipeline (e.g. client)
+eval_pipeline = [
+    dict(
+        type='LoadPointsFromFile',
+        coord_type='LIDAR',
+        load_dim=4,
+        use_dim=4,
+        file_client_args=file_client_args),
+    dict(
+        type='DefaultFormatBundle3D',
+        class_names=class_names,
+        with_label=False),
+    dict(type='Collect3D', keys=['points'])
 ]
 
 data = dict(
@@ -118,4 +135,4 @@ data = dict(
         test_mode=True,
         box_type_3d='LiDAR'))
 
-evaluation = dict(interval=1)
+evaluation = dict(interval=1, pipeline=eval_pipeline)

@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from mmdet3d.core.points import BasePoints
 from .base_box3d import BaseInstance3DBoxes
 from .utils import limit_period, rotation_3d_in_axis
 
@@ -12,7 +13,7 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
 
     .. code-block:: none
 
-                z front (yaw=0.5*pi)
+                z front (yaw=-0.5*pi)
                /
               /
              0 ------> x right (yaw=0)
@@ -23,8 +24,11 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
 
     The relative coordinate of bottom center in a CAM box is (0.5, 1.0, 0.5),
     and the yaw is around the y axis, thus the rotation axis=1.
-    The yaw is 0 at the positive direction of x axis, and increases from
+    The yaw is 0 at the positive direction of x axis, and decreases from
     the positive direction of x to the positive direction of z.
+
+    A refactor is ongoing to make the three coordinate systems
+    easier to understand and convert between each other.
 
     Attributes:
         tensor (torch.Tensor): Float matrix of N x box_dim.
@@ -62,7 +66,7 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         else:
             self.box_dim = box_dim
             self.with_yaw = with_yaw
-        self.tensor = tensor
+        self.tensor = tensor.clone()
 
         if origin != (0.5, 1.0, 0.5):
             dst = self.tensor.new_tensor((0.5, 1.0, 0.5))
@@ -96,7 +100,8 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
 
     @property
     def corners(self):
-        """torch.Tensor: Coordinates of corners of all the boxes in shape (N, 8, 3).
+        """torch.Tensor: Coordinates of corners of all the boxes in
+                         shape (N, 8, 3).
 
         Convert the boxes to  in clockwise order, in the form of
         (x0y0z0, x0y0z1, x0y1z1, x0y1z0, x1y0z0, x1y0z1, x1y1z1, x1y1z0)
@@ -164,12 +169,14 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         return bev_boxes
 
     def rotate(self, angle, points=None):
-        """Rotate boxes with points (optional) with the given angle.
+        """Rotate boxes with points (optional) with the given angle or \
+        rotation matrix.
 
         Args:
-            angle (float, torch.Tensor): Rotation angle.
-            points (torch.Tensor, numpy.ndarray, optional): Points to rotate.
-                Defaults to None.
+            angle (float | torch.Tensor | np.ndarray):
+                Rotation angle or rotation matrix.
+            points (torch.Tensor, numpy.ndarray, :obj:`BasePoints`, optional):
+                Points to rotate. Defaults to None.
 
         Returns:
             tuple or None: When ``points`` is None, the function returns \
@@ -178,10 +185,20 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         """
         if not isinstance(angle, torch.Tensor):
             angle = self.tensor.new_tensor(angle)
-        rot_sin = torch.sin(angle)
-        rot_cos = torch.cos(angle)
-        rot_mat_T = self.tensor.new_tensor([[rot_cos, 0, -rot_sin], [0, 1, 0],
-                                            [rot_sin, 0, rot_cos]])
+        assert angle.shape == torch.Size([3, 3]) or angle.numel() == 1, \
+            f'invalid rotation angle shape {angle.shape}'
+
+        if angle.numel() == 1:
+            rot_sin = torch.sin(angle)
+            rot_cos = torch.cos(angle)
+            rot_mat_T = self.tensor.new_tensor([[rot_cos, 0, -rot_sin],
+                                                [0, 1, 0],
+                                                [rot_sin, 0, rot_cos]])
+        else:
+            rot_mat_T = angle
+            rot_sin = rot_mat_T[2, 0]
+            rot_cos = rot_mat_T[0, 0]
+            angle = np.arctan2(rot_sin, rot_cos)
 
         self.tensor[:, :3] = self.tensor[:, :3] @ rot_mat_T
         self.tensor[:, 6] += angle
@@ -192,6 +209,9 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
             elif isinstance(points, np.ndarray):
                 rot_mat_T = rot_mat_T.numpy()
                 points[:, :3] = np.dot(points[:, :3], rot_mat_T)
+            elif isinstance(points, BasePoints):
+                # clockwise
+                points.rotate(-angle)
             else:
                 raise ValueError
             return points, rot_mat_T
@@ -203,8 +223,8 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
 
         Args:
             bev_direction (str): Flip direction (horizontal or vertical).
-            points (torch.Tensor, numpy.ndarray, None): Points to flip.
-                Defaults to None.
+            points (torch.Tensor, numpy.ndarray, :obj:`BasePoints`, None):
+                Points to flip. Defaults to None.
 
         Returns:
             torch.Tensor, numpy.ndarray or None: Flipped points.
@@ -220,11 +240,14 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
                 self.tensor[:, 6] = -self.tensor[:, 6]
 
         if points is not None:
-            assert isinstance(points, (torch.Tensor, np.ndarray))
-            if bev_direction == 'horizontal':
-                points[:, 0] = -points[:, 0]
-            elif bev_direction == 'vertical':
-                points[:, 2] = -points[:, 2]
+            assert isinstance(points, (torch.Tensor, np.ndarray, BasePoints))
+            if isinstance(points, (torch.Tensor, np.ndarray)):
+                if bev_direction == 'horizontal':
+                    points[:, 0] = -points[:, 0]
+                elif bev_direction == 'vertical':
+                    points[:, 2] = -points[:, 2]
+            elif isinstance(points, BasePoints):
+                points.flip(bev_direction)
             return points
 
     def in_range_bev(self, box_range):
@@ -285,7 +308,7 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
 
         Args:
             dst (:obj:`BoxMode`): The target Box mode.
-            rt_mat (np.dnarray | torch.Tensor): The rotation and translation
+            rt_mat (np.ndarray | torch.Tensor): The rotation and translation
                 matrix between different coordinates. Defaults to None.
                 The conversion from ``src`` coordinates to ``dst`` coordinates
                 usually comes along the change of sensors, e.g., from camera

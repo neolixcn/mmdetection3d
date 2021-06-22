@@ -2,6 +2,7 @@ import numpy as np
 from mmcv.parallel import DataContainer as DC
 
 from mmdet3d.core.bbox import BaseInstance3DBoxes
+from mmdet3d.core.points import BasePoints
 from mmdet.datasets.builder import PIPELINES
 from mmdet.datasets.pipelines import to_tensor
 
@@ -50,7 +51,8 @@ class DefaultFormatBundle(object):
                 results['img'] = DC(to_tensor(img), stack=True)
         for key in [
                 'proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels',
-                'gt_labels_3d', 'pts_instance_mask', 'pts_semantic_mask'
+                'gt_labels_3d', 'attr_labels', 'pts_instance_mask',
+                'pts_semantic_mask', 'centers2d', 'depths'
         ]:
             if key not in results:
                 continue
@@ -71,6 +73,7 @@ class DefaultFormatBundle(object):
         if 'gt_semantic_seg' in results:
             results['gt_semantic_seg'] = DC(
                 to_tensor(results['gt_semantic_seg'][None, ...]), stack=True)
+
         return results
 
     def __repr__(self):
@@ -132,11 +135,11 @@ class Collect3D(object):
                  keys,
                  meta_keys=('filename', 'ori_shape', 'img_shape', 'lidar2img',
                             'pad_shape', 'scale_factor', 'flip',
-                            'pcd_horizontal_flip', 'pcd_vertical_flip',
-                            'box_mode_3d', 'box_type_3d', 'img_norm_cfg',
-                            'rect', 'Trv2c', 'P2', 'pcd_trans', 'sample_idx',
-                            'pcd_scale_factor', 'pcd_rotation',
-                            'pts_filename')):
+                            'cam_intrinsic', 'pcd_horizontal_flip',
+                            'pcd_vertical_flip', 'box_mode_3d', 'box_type_3d',
+                            'img_norm_cfg', 'rect', 'Trv2c', 'P2', 'pcd_trans',
+                            'sample_idx', 'pcd_scale_factor', 'pcd_rotation',
+                            'pts_filename', 'transformation_3d_flow')):
         self.keys = keys
         self.meta_keys = meta_keys
 
@@ -165,8 +168,8 @@ class Collect3D(object):
 
     def __repr__(self):
         """str: Return a string that describes the module."""
-        return self.__class__.__name__ + '(keys={}, meta_keys={})'.format(
-            self.keys, self.meta_keys)
+        return self.__class__.__name__ + \
+            f'(keys={self.keys}, meta_keys={self.meta_keys})'
 
 
 @PIPELINES.register_module()
@@ -202,9 +205,11 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
                 default bundle.
         """
         # Format 3D data
-        for key in [
-                'voxels', 'coors', 'voxel_centers', 'num_points', 'points'
-        ]:
+        if 'points' in results:
+            assert isinstance(results['points'], BasePoints)
+            results['points'] = DC(results['points'].tensor)
+
+        for key in ['voxels', 'coors', 'voxel_centers', 'num_points']:
             if key not in results:
                 continue
             results[key] = DC(to_tensor(results[key]), stack=False)
@@ -218,6 +223,11 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
                 if 'gt_names_3d' in results:
                     results['gt_names_3d'] = results['gt_names_3d'][
                         gt_bboxes_3d_mask]
+                if 'centers2d' in results:
+                    results['centers2d'] = results['centers2d'][
+                        gt_bboxes_3d_mask]
+                if 'depths' in results:
+                    results['depths'] = results['depths'][gt_bboxes_3d_mask]
             if 'gt_bboxes_mask' in results:
                 gt_bboxes_mask = results['gt_bboxes_mask']
                 if 'gt_bboxes' in results:
@@ -226,6 +236,7 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
             if self.with_label:
                 if 'gt_names' in results and len(results['gt_names']) == 0:
                     results['gt_labels'] = np.array([], dtype=np.int64)
+                    results['attr_labels'] = np.array([], dtype=np.int64)
                 elif 'gt_names' in results and isinstance(
                         results['gt_names'][0], list):
                     # gt_labels might be a list of list in multi-view setting
@@ -252,7 +263,6 @@ class DefaultFormatBundle3D(DefaultFormatBundle):
     def __repr__(self):
         """str: Return a string that describes the module."""
         repr_str = self.__class__.__name__
-        repr_str += '(class_names={}, '.format(self.class_names)
-        repr_str += 'with_gt={}, with_label={})'.format(
-            self.with_gt, self.with_label)
+        repr_str += f'(class_names={self.class_names}, '
+        repr_str += f'with_gt={self.with_gt}, with_label={self.with_label})'
         return repr_str

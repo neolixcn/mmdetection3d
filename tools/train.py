@@ -2,20 +2,23 @@ from __future__ import division
 
 import argparse
 import copy
-import logging
 import mmcv
 import os
 import time
 import torch
+import warnings
 from mmcv import Config, DictAction
-from mmcv.runner import init_dist
+from mmcv.runner import get_dist_info, init_dist
 from os import path as osp
 
-from mmdet3d import __version__
+from mmdet import __version__ as mmdet_version
+from mmdet3d import __version__ as mmdet3d_version
+from mmdet3d.apis import train_model
 from mmdet3d.datasets import build_dataset
-from mmdet3d.models import build_detector
+from mmdet3d.models import build_model
 from mmdet3d.utils import collect_env, get_root_logger
-from mmdet.apis import set_random_seed, train_detector
+from mmdet.apis import set_random_seed
+from mmseg import __version__ as mmseg_version
 
 
 def parse_args():
@@ -46,7 +49,22 @@ def parse_args():
         action='store_true',
         help='whether to set deterministic options for CUDNN backend.')
     parser.add_argument(
-        '--options', nargs='+', action=DictAction, help='arguments in dict')
+        '--options',
+        nargs='+',
+        action=DictAction,
+        help='override some settings in the used config, the key-value pair '
+        'in xxx=yyy format will be merged into config file (deprecate), '
+        'change to --cfg-options instead.')
+    parser.add_argument(
+        '--cfg-options',
+        nargs='+',
+        action=DictAction,
+        help='override some settings in the used config, the key-value pair '
+        'in xxx=yyy format will be merged into config file. If the value to '
+        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+        'Note that the quotation marks are necessary and that no white space '
+        'is allowed.')
     parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm', 'mpi'],
@@ -61,6 +79,14 @@ def parse_args():
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
+    if args.options and args.cfg_options:
+        raise ValueError(
+            '--options and --cfg-options cannot be both specified, '
+            '--options is deprecated in favor of --cfg-options')
+    if args.options:
+        warnings.warn('--options is deprecated in favor of --cfg-options')
+        args.cfg_options = args.options
+
     return args
 
 
@@ -68,8 +94,12 @@ def main():
     args = parse_args()
 
     cfg = Config.fromfile(args.config)
-    if args.options is not None:
-        cfg.merge_from_dict(args.options)
+    if args.cfg_options is not None:
+        cfg.merge_from_dict(args.cfg_options)
+    # import modules from string list.
+    if cfg.get('custom_imports', None):
+        from mmcv.utils import import_modules_from_strings
+        import_modules_from_strings(**cfg['custom_imports'])
 
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
@@ -100,17 +130,26 @@ def main():
     else:
         distributed = True
         init_dist(args.launcher, **cfg.dist_params)
+        # re-set gpu_ids with distributed training mode
+        _, world_size = get_dist_info()
+        cfg.gpu_ids = range(world_size)
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
+    # dump config
+    cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))
     # init the logger before other steps
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
-    logger = get_root_logger(log_file=log_file, log_level=cfg.log_level)
-
-    # add a logging filter
-    logging_filter = logging.Filter('mmdet')
-    logging_filter.filter = lambda record: record.find('mmdet') != -1
+    # specify logger name, if we still use 'mmdet', the output info will be
+    # filtered and won't be saved in the log_file
+    # TODO: ugly workaround to judge whether we are training det or seg model
+    if cfg.model.type in ['EncoderDecoder3D']:
+        logger_name = 'mmseg'
+    else:
+        logger_name = 'mmdet'
+    logger = get_root_logger(
+        log_file=log_file, log_level=cfg.log_level, name=logger_name)
 
     # init the meta dict to record some important information such as
     # environment info and seed, which will be logged
@@ -122,6 +161,7 @@ def main():
     logger.info('Environment info:\n' + dash_line + env_info + '\n' +
                 dash_line)
     meta['env_info'] = env_info
+    meta['config'] = cfg.pretty_text
 
     # log some basic info
     logger.info(f'Distributed training: {distributed}')
@@ -134,25 +174,41 @@ def main():
         set_random_seed(args.seed, deterministic=args.deterministic)
     cfg.seed = args.seed
     meta['seed'] = args.seed
+    meta['exp_name'] = osp.basename(args.config)
 
-    model = build_detector(
-        cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
+    model = build_model(
+        cfg.model,
+        train_cfg=cfg.get('train_cfg'),
+        test_cfg=cfg.get('test_cfg'))
+
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
-        val_dataset.pipeline = cfg.data.train.pipeline
+        # in case we use a dataset wrapper
+        if 'dataset' in cfg.data.train:
+            val_dataset.pipeline = cfg.data.train.dataset.pipeline
+        else:
+            val_dataset.pipeline = cfg.data.train.pipeline
+        # set test_mode=False here in deep copied config
+        # which do not affect AP/AR calculation later
+        # refer to https://mmdetection3d.readthedocs.io/en/latest/tutorials/customize_runtime.html#customize-workflow  # noqa
+        val_dataset.test_mode = False
         datasets.append(build_dataset(val_dataset))
     if cfg.checkpoint_config is not None:
         # save mmdet version, config file content and class names in
         # checkpoints as meta data
         cfg.checkpoint_config.meta = dict(
-            mmdet_version=__version__,
+            mmdet_version=mmdet_version,
+            mmseg_version=mmseg_version,
+            mmdet3d_version=mmdet3d_version,
             config=cfg.pretty_text,
-            CLASSES=datasets[0].CLASSES)
+            CLASSES=datasets[0].CLASSES,
+            PALETTE=datasets[0].PALETTE  # for segmentors
+            if hasattr(datasets[0], 'PALETTE') else None)
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
-    train_detector(
+    train_model(
         model,
         datasets,
         cfg,

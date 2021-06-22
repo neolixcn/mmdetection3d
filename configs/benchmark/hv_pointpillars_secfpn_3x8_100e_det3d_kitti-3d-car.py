@@ -50,27 +50,27 @@ model = dict(
             loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
         loss_dir=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
-# model training and testing settings
-train_cfg = dict(
-    assigner=dict(
-        type='MaxIoUAssigner',
-        iou_calculator=dict(type='BboxOverlapsNearest3D'),
-        pos_iou_thr=0.6,
-        neg_iou_thr=0.45,
-        min_pos_iou=0.45,
-        ignore_iof_thr=-1),
-    allowed_border=0,
-    pos_weight=-1,
-    debug=False)
-test_cfg = dict(
-    use_rotate_nms=True,
-    nms_across_levels=False,
-    nms_thr=0.01,
-    score_thr=0.1,
-    min_bbox_size=0,
-    nms_pre=100,
-    max_num=50)
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)),
+    # model training and testing settings
+    train_cfg=dict(
+        assigner=dict(
+            type='MaxIoUAssigner',
+            iou_calculator=dict(type='BboxOverlapsNearest3D'),
+            pos_iou_thr=0.6,
+            neg_iou_thr=0.45,
+            min_pos_iou=0.45,
+            ignore_iof_thr=-1),
+        allowed_border=0,
+        pos_weight=-1,
+        debug=False),
+    test_cfg=dict(
+        use_rotate_nms=True,
+        nms_across_levels=False,
+        nms_thr=0.01,
+        score_thr=0.1,
+        min_bbox_size=0,
+        nms_pre=100,
+        max_num=50))
 
 # dataset settings
 dataset_type = 'KittiDataset'
@@ -86,20 +86,20 @@ db_sampler = dict(
     classes=class_names)
 
 train_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(type='ObjectSample', db_sampler=db_sampler),
     dict(
         type='ObjectNoise',
         num_try=100,
-        loc_noise_std=[0.25, 0.25, 0.25],
+        translation_std=[0.25, 0.25, 0.25],
         global_rot_range=[0.0, 0.0],
-        rot_uniform_noise=[-0.15707963267, 0.15707963267]),
+        rot_range=[-0.15707963267, 0.15707963267]),
     dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
     dict(
-        type='GlobalRotScale',
-        rot_uniform_noise=[-0.78539816, 0.78539816],
-        scaling_uniform_noise=[0.95, 1.05]),
+        type='GlobalRotScaleTrans',
+        rot_range=[-0.78539816, 0.78539816],
+        scale_ratio_range=[0.95, 1.05]),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='PointShuffle'),
@@ -107,8 +107,18 @@ train_pipeline = [
     dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
 ]
 test_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+    dict(
+        type='DefaultFormatBundle3D',
+        class_names=class_names,
+        with_label=False),
+    dict(type='Collect3D', keys=['points'])
+]
+# construct a pipeline for data and gt loading in show function
+# please keep its loading function consistent with test_pipeline (e.g. client)
+eval_pipeline = [
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(
         type='DefaultFormatBundle3D',
         class_names=class_names,
@@ -172,7 +182,7 @@ momentum_config = dict(
     cyclic_times=1,
     step_ratio_up=0.4)
 checkpoint_config = dict(interval=1)
-evaluation = dict(interval=1)
+evaluation = dict(interval=1, pipeline=eval_pipeline)
 # yapf:disable
 log_config = dict(
     interval=50,
@@ -182,7 +192,7 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 50
+runner = dict(type='EpochBasedRunner', max_epochs=50)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/pp_secfpn_100e'

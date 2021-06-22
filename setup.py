@@ -147,7 +147,8 @@ if __name__ == '__main__':
         author_email='zwwdev@gmail.com',
         keywords='computer vision, 3D object detection',
         url='https://github.com/open-mmlab/mmdetection3d',
-        packages=find_packages(exclude=('configs', 'tools', 'demo')),
+        packages=find_packages(),
+        include_package_data=True,
         package_data={'mmdet3d.ops': ['*/*.so']},
         classifiers=[
             'Development Status :: 4 - Beta',
@@ -221,6 +222,16 @@ if __name__ == '__main__':
                 module='mmdet3d.ops.ball_query',
                 sources=['src/ball_query.cpp'],
                 sources_cuda=['src/ball_query_cuda.cu']),
+            make_cuda_ext(
+                name='knn_ext',
+                module='mmdet3d.ops.knn',
+                sources=['src/knn.cpp'],
+                sources_cuda=['src/knn_cuda.cu']),
+            make_cuda_ext(
+                name='assign_score_withk_ext',
+                module='mmdet3d.ops.paconv',
+                sources=['src/assign_score_withk.cpp'],
+                sources_cuda=['src/assign_score_withk_cuda.cu']),
             make_cuda_ext(
                 name='group_points_ext',
                 module='mmdet3d.ops.group_points',

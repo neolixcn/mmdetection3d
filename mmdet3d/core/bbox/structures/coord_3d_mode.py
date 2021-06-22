@@ -77,19 +77,19 @@ class Coord3DMode(IntEnum):
         """Convert boxes from `src` mode to `dst` mode.
 
         Args:
-            box (tuple | list | np.dnarray |
+            box (tuple | list | np.ndarray |
                 torch.Tensor | BaseInstance3DBoxes):
                 Can be a k-tuple, k-list or an Nxk array/tensor, where k = 7.
             src (:obj:`CoordMode`): The src Box mode.
             dst (:obj:`CoordMode`): The target Box mode.
-            rt_mat (np.dnarray | torch.Tensor): The rotation and translation
+            rt_mat (np.ndarray | torch.Tensor): The rotation and translation
                 matrix between different coordinates. Defaults to None.
                 The conversion from `src` coordinates to `dst` coordinates
                 usually comes along the change of sensors, e.g., from camera
                 to LiDAR. This requires a transformation matrix.
 
         Returns:
-            (tuple | list | np.dnarray | torch.Tensor | BaseInstance3DBoxes): \
+            (tuple | list | np.ndarray | torch.Tensor | BaseInstance3DBoxes): \
                 The converted box of the same type.
         """
         if src == dst:
@@ -182,19 +182,19 @@ class Coord3DMode(IntEnum):
         """Convert points from `src` mode to `dst` mode.
 
         Args:
-            box (tuple | list | np.dnarray |
+            point (tuple | list | np.ndarray |
                 torch.Tensor | BasePoints):
                 Can be a k-tuple, k-list or an Nxk array/tensor.
             src (:obj:`CoordMode`): The src Point mode.
             dst (:obj:`CoordMode`): The target Point mode.
-            rt_mat (np.dnarray | torch.Tensor): The rotation and translation
+            rt_mat (np.ndarray | torch.Tensor): The rotation and translation
                 matrix between different coordinates. Defaults to None.
                 The conversion from `src` coordinates to `dst` coordinates
                 usually comes along the change of sensors, e.g., from camera
                 to LiDAR. This requires a transformation matrix.
 
         Returns:
-            (tuple | list | np.dnarray | torch.Tensor | BasePoints): \
+            (tuple | list | np.ndarray | torch.Tensor | BasePoints): \
                 The converted point of the same type.
         """
         if src == dst:
@@ -218,21 +218,36 @@ class Coord3DMode(IntEnum):
                 arr = point.clone()
 
         # convert point from `src` mode to `dst` mode.
-        if rt_mat is not None:
-            if not isinstance(rt_mat, torch.Tensor):
-                rt_mat = arr.new_tensor(rt_mat)
+        # TODO: LIDAR
+        # only implemented provided Rt matrix in cam-depth conversion
         if src == Coord3DMode.LIDAR and dst == Coord3DMode.CAM:
-            rt_mat = arr.new_tensor([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
         elif src == Coord3DMode.CAM and dst == Coord3DMode.LIDAR:
-            rt_mat = arr.new_tensor([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
         elif src == Coord3DMode.DEPTH and dst == Coord3DMode.CAM:
-            rt_mat = arr.new_tensor([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+            # LIDAR-CAM conversion is different from DEPTH-CAM conversion
+            # because SUNRGB-D camera calibration files are different from
+            # that of KITTI, and currently we keep this hack
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+            else:
+                rt_mat = rt_mat.new_tensor(
+                    [[1, 0, 0], [0, 0, -1], [0, 1, 0]]) @ \
+                    rt_mat.transpose(1, 0)
         elif src == Coord3DMode.CAM and dst == Coord3DMode.DEPTH:
-            rt_mat = arr.new_tensor([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+            else:
+                rt_mat = rt_mat @ rt_mat.new_tensor([[1, 0, 0], [0, 0, 1],
+                                                     [0, -1, 0]])
         elif src == Coord3DMode.LIDAR and dst == Coord3DMode.DEPTH:
-            rt_mat = arr.new_tensor([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
         elif src == Coord3DMode.DEPTH and dst == Coord3DMode.LIDAR:
-            rt_mat = arr.new_tensor([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
+            if rt_mat is None:
+                rt_mat = arr.new_tensor([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
         else:
             raise NotImplementedError(
                 f'Conversion from Coord3DMode {src} to {dst} '
@@ -245,7 +260,7 @@ class Coord3DMode(IntEnum):
         else:
             xyz = arr[:, :3] @ rt_mat.t()
 
-        remains = arr[..., 3:]
+        remains = arr[:, 3:]
         arr = torch.cat([xyz[:, :3], remains], dim=-1)
 
         # convert arr to the original type

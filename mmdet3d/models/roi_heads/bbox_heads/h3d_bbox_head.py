@@ -346,7 +346,7 @@ class H3DBboxHead(nn.Module):
             dict: Losses of H3dnet.
         """
         (vote_targets, vote_target_masks, size_class_targets, size_res_targets,
-         dir_class_targets, dir_res_targets, center_targets, mask_targets,
+         dir_class_targets, dir_res_targets, center_targets, _, mask_targets,
          valid_gt_masks, objectness_targets, objectness_weights,
          box_loss_weights, valid_gt_weights) = rpn_targets
 
@@ -525,7 +525,8 @@ class H3DBboxHead(nn.Module):
 
         # filter empty boxes and boxes with low score
         scores_mask = (obj_scores > self.test_cfg.score_thr)
-        nonempty_box_inds = torch.nonzero(nonempty_box_mask).flatten()
+        nonempty_box_inds = torch.nonzero(
+            nonempty_box_mask, as_tuple=False).flatten()
         nonempty_mask = torch.zeros_like(bbox_classes).scatter(
             0, nonempty_box_inds[nms_selected], 1)
         selected = (nonempty_mask.bool() & scores_mask.bool())

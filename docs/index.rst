@@ -3,17 +3,25 @@ Welcome to MMDetection3D's documentation!
 
 .. toctree::
    :maxdepth: 2
+   :caption: Get Started
 
-   install.md
    getting_started.md
    model_zoo.md
+   data_preparation.md
 
 .. toctree::
    :maxdepth: 2
-   :caption: Notes
+   :caption: Quick Run
 
-   benchmarks.md
-   config.md
+   0_demo.md
+   1_exist_data_model.md
+   2_new_data_model.md
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Supported Tasks
+
+   supported_tasks/index.rst
 
 .. toctree::
    :maxdepth: 2
@@ -22,10 +30,28 @@ Welcome to MMDetection3D's documentation!
    tutorials/index.rst
 
 .. toctree::
+   :maxdepth: 2
+   :caption: Useful Tools and Scripts
+
+   useful_tools.md
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Notes
+
+   benchmarks.md
+   faq.md
+   compatibility.md
+
+.. toctree::
    :caption: API Reference
 
    api.rst
 
+.. toctree::
+   :caption: 语言切换
+
+   switch_language.md
 
 Indices and tables
 ==================
