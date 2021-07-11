@@ -1,3 +1,9 @@
+"""Script to gather benchmarked models and prepare them for upload.
+
+Usage:
+python gather_models.py ${root_path} ${out_dir}
+"""
+
 import argparse
 import glob
 import json
@@ -15,7 +21,11 @@ SCHEDULES_LUT = {
     '_3x_': 36,
     '_4x_': 48,
     '_24e_': 24,
-    '_6x_': 73
+    '_6x_': 73,
+    '_50e_': 50,
+    '_80e_': 80,
+    '_200e_': 200,
+    '_250e_': 250
 }
 
 # TODO: add support for lyft dataset
@@ -28,6 +38,8 @@ RESULTS_LUT = {
     ],
     'kitti-3d-car': ['KITTI/Car_3D_moderate_strict', 'Car_3D_moderate_strict'],
     'lyft': ['score'],
+    'scannet_seg': ['miou'],
+    's3dis_seg': ['miou'],
     'scannet': ['mAR_0.50'],
     'sunrgbd': ['mAR_0.50']
 }
@@ -163,7 +175,8 @@ def main():
         model_publish_dir = osp.join(models_out, model['config'].rstrip('.py'))
         mmcv.mkdir_or_exist(model_publish_dir)
 
-        model_name = model_publish_dir + '_' + model['model_time']
+        model_name = model['config'].split('/')[-1].rstrip(
+            '.py') + '_' + model['model_time']
         publish_model_path = osp.join(model_publish_dir, model_name)
         trained_model_path = osp.join(models_root, model['config'],
                                       'epoch_{}.pth'.format(model['epochs']))

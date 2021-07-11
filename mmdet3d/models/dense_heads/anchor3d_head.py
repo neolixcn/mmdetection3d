@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from mmcv.cnn import bias_init_with_prob, normal_init
+from mmcv.runner import BaseModule, force_fp32
 from torch import nn as nn
 
 from mmdet3d.core import (PseudoSampler, box3d_multiclass_nms, limit_period,
@@ -13,7 +13,7 @@ from .train_mixins import AnchorTrainMixin
 
 
 @HEADS.register_module()
-class Anchor3DHead(nn.Module, AnchorTrainMixin):
+class Anchor3DHead(BaseModule, AnchorTrainMixin):
     """Anchor head for SECOND/PointPillars/MVXNet/PartA2.
 
     Args:
@@ -66,8 +66,9 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
                      loss_weight=1.0),
                  loss_bbox=dict(
                      type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
-                 loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2)):
-        super().__init__()
+                 loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2),
+                 init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.feat_channels = feat_channels
@@ -79,6 +80,7 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
         self.assign_per_class = assign_per_class
         self.dir_offset = dir_offset
         self.dir_limit_offset = dir_limit_offset
+        self.fp16_enabled = False
 
         # build anchor generator
         self.anchor_generator = build_anchor_generator(anchor_generator)
@@ -100,6 +102,14 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
 
         self._init_layers()
         self._init_assigner_sampler()
+
+        if init_cfg is None:
+            self.init_cfg = dict(
+                type='Normal',
+                layer='Conv2d',
+                std=0.01,
+                override=dict(
+                    type='Normal', name='conv_cls', std=0.01, bias_prob=0.01))
 
     def _init_assigner_sampler(self):
         """Initialize the target assigner and sampler of the head."""
@@ -126,12 +136,6 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
         if self.use_direction_classifier:
             self.conv_dir_cls = nn.Conv2d(self.feat_channels,
                                           self.num_anchors * 2, 1)
-
-    def init_weights(self):
-        """Initialize the weights of head."""
-        bias_cls = bias_init_with_prob(0.01)
-        normal_init(self.conv_cls, std=0.01, bias=bias_cls)
-        normal_init(self.conv_reg, std=0.01)
 
     def forward_single(self, x):
         """Forward function on a single-scale feature map.
@@ -211,38 +215,61 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
         labels = labels.reshape(-1)
         label_weights = label_weights.reshape(-1)
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
+        assert labels.max().item() <= self.num_classes
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
 
         # regression loss
-        bbox_targets = bbox_targets.reshape(-1, self.box_code_size)
-        bbox_weights = bbox_weights.reshape(-1, self.box_code_size)
-        code_weight = self.train_cfg.get('code_weight', None)
-
-        if code_weight:
-            bbox_weights = bbox_weights * bbox_weights.new_tensor(code_weight)
         bbox_pred = bbox_pred.permute(0, 2, 3,
                                       1).reshape(-1, self.box_code_size)
-        if self.diff_rad_by_sin:
-            bbox_pred, bbox_targets = self.add_sin_difference(
-                bbox_pred, bbox_targets)
-        loss_bbox = self.loss_bbox(
-            bbox_pred,
-            bbox_targets,
-            bbox_weights,
-            avg_factor=num_total_samples)
+        bbox_targets = bbox_targets.reshape(-1, self.box_code_size)
+        bbox_weights = bbox_weights.reshape(-1, self.box_code_size)
 
-        # direction classification loss
-        loss_dir = None
+        bg_class_ind = self.num_classes
+        pos_inds = ((labels >= 0)
+                    & (labels < bg_class_ind)).nonzero(
+                        as_tuple=False).reshape(-1)
+        num_pos = len(pos_inds)
+
+        pos_bbox_pred = bbox_pred[pos_inds]
+        pos_bbox_targets = bbox_targets[pos_inds]
+        pos_bbox_weights = bbox_weights[pos_inds]
+
+        # dir loss
         if self.use_direction_classifier:
             dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).reshape(-1, 2)
             dir_targets = dir_targets.reshape(-1)
             dir_weights = dir_weights.reshape(-1)
-            loss_dir = self.loss_dir(
-                dir_cls_preds,
-                dir_targets,
-                dir_weights,
+            pos_dir_cls_preds = dir_cls_preds[pos_inds]
+            pos_dir_targets = dir_targets[pos_inds]
+            pos_dir_weights = dir_weights[pos_inds]
+
+        if num_pos > 0:
+            code_weight = self.train_cfg.get('code_weight', None)
+            if code_weight:
+                pos_bbox_weights = pos_bbox_weights * bbox_weights.new_tensor(
+                    code_weight)
+            if self.diff_rad_by_sin:
+                pos_bbox_pred, pos_bbox_targets = self.add_sin_difference(
+                    pos_bbox_pred, pos_bbox_targets)
+            loss_bbox = self.loss_bbox(
+                pos_bbox_pred,
+                pos_bbox_targets,
+                pos_bbox_weights,
                 avg_factor=num_total_samples)
+
+            # direction classification loss
+            loss_dir = None
+            if self.use_direction_classifier:
+                loss_dir = self.loss_dir(
+                    pos_dir_cls_preds,
+                    pos_dir_targets,
+                    pos_dir_weights,
+                    avg_factor=num_total_samples)
+        else:
+            loss_bbox = pos_bbox_pred.sum()
+            if self.use_direction_classifier:
+                loss_dir = pos_dir_cls_preds.sum()
 
         return loss_cls, loss_bbox, loss_dir
 
@@ -270,6 +297,7 @@ class Anchor3DHead(nn.Module, AnchorTrainMixin):
                            dim=-1)
         return boxes1, boxes2
 
+    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'dir_cls_preds'))
     def loss(self,
              cls_scores,
              bbox_preds,

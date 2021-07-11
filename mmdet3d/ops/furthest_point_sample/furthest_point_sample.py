@@ -7,8 +7,8 @@ from . import furthest_point_sample_ext
 class FurthestPointSampling(Function):
     """Furthest Point Sampling.
 
-    Uses iterative furthest point sampling to select a set of features
-    whose corresponding points have the furthest distance.
+    Uses iterative furthest point sampling to select a set of features whose
+    corresponding points have the furthest distance.
     """
 
     @staticmethod
@@ -25,7 +25,7 @@ class FurthestPointSampling(Function):
         """
         assert points_xyz.is_contiguous()
 
-        B, N, _ = points_xyz.size()
+        B, N = points_xyz.size()[:2]
         output = torch.cuda.IntTensor(B, num_points)
         temp = torch.cuda.FloatTensor(B, N).fill_(1e10)
 

@@ -1,3 +1,5 @@
+_base_ = ['../_base_/schedules/cosine.py', '../_base_/default_runtime.py']
+
 # model settings
 voxel_size = [0.05, 0.05, 0.1]
 point_cloud_range = [0, -40, -3, 70.4, 40, 1]
@@ -87,45 +89,45 @@ model = dict(
             loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
         loss_dir=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
-# model training and testing settings
-train_cfg = dict(
-    pts=dict(
-        assigner=[
-            dict(  # for Pedestrian
-                type='MaxIoUAssigner',
-                iou_calculator=dict(type='BboxOverlapsNearest3D'),
-                pos_iou_thr=0.35,
-                neg_iou_thr=0.2,
-                min_pos_iou=0.2,
-                ignore_iof_thr=-1),
-            dict(  # for Cyclist
-                type='MaxIoUAssigner',
-                iou_calculator=dict(type='BboxOverlapsNearest3D'),
-                pos_iou_thr=0.35,
-                neg_iou_thr=0.2,
-                min_pos_iou=0.2,
-                ignore_iof_thr=-1),
-            dict(  # for Car
-                type='MaxIoUAssigner',
-                iou_calculator=dict(type='BboxOverlapsNearest3D'),
-                pos_iou_thr=0.6,
-                neg_iou_thr=0.45,
-                min_pos_iou=0.45,
-                ignore_iof_thr=-1),
-        ],
-        allowed_border=0,
-        pos_weight=-1,
-        debug=False))
-test_cfg = dict(
-    pts=dict(
-        use_rotate_nms=True,
-        nms_across_levels=False,
-        nms_thr=0.01,
-        score_thr=0.1,
-        min_bbox_size=0,
-        nms_pre=100,
-        max_num=50))
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)),
+    # model training and testing settings
+    train_cfg=dict(
+        pts=dict(
+            assigner=[
+                dict(  # for Pedestrian
+                    type='MaxIoUAssigner',
+                    iou_calculator=dict(type='BboxOverlapsNearest3D'),
+                    pos_iou_thr=0.35,
+                    neg_iou_thr=0.2,
+                    min_pos_iou=0.2,
+                    ignore_iof_thr=-1),
+                dict(  # for Cyclist
+                    type='MaxIoUAssigner',
+                    iou_calculator=dict(type='BboxOverlapsNearest3D'),
+                    pos_iou_thr=0.35,
+                    neg_iou_thr=0.2,
+                    min_pos_iou=0.2,
+                    ignore_iof_thr=-1),
+                dict(  # for Car
+                    type='MaxIoUAssigner',
+                    iou_calculator=dict(type='BboxOverlapsNearest3D'),
+                    pos_iou_thr=0.6,
+                    neg_iou_thr=0.45,
+                    min_pos_iou=0.45,
+                    ignore_iof_thr=-1),
+            ],
+            allowed_border=0,
+            pos_weight=-1,
+            debug=False)),
+    test_cfg=dict(
+        pts=dict(
+            use_rotate_nms=True,
+            nms_across_levels=False,
+            nms_thr=0.01,
+            score_thr=0.1,
+            min_bbox_size=0,
+            nms_pre=100,
+            max_num=50)))
 
 # dataset settings
 dataset_type = 'KittiDataset'
@@ -135,7 +137,7 @@ img_norm_cfg = dict(
     mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 input_modality = dict(use_lidar=True, use_camera=True)
 train_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
@@ -160,7 +162,7 @@ train_pipeline = [
         keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d']),
 ]
 test_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadImageFromFile'),
     dict(
         type='MultiScaleFlipAug3D',
@@ -186,6 +188,17 @@ test_pipeline = [
             dict(type='Collect3D', keys=['points', 'img'])
         ])
 ]
+# construct a pipeline for data and gt loading in show function
+# please keep its loading function consistent with test_pipeline (e.g. client)
+eval_pipeline = [
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
+    dict(type='LoadImageFromFile'),
+    dict(
+        type='DefaultFormatBundle3D',
+        class_names=class_names,
+        with_label=False),
+    dict(type='Collect3D', keys=['points', 'img'])
+]
 
 data = dict(
     samples_per_gpu=2,
@@ -202,7 +215,8 @@ data = dict(
             pipeline=train_pipeline,
             modality=input_modality,
             classes=class_names,
-            test_mode=False)),
+            test_mode=False,
+            box_type_3d='LiDAR')),
     val=dict(
         type=dataset_type,
         data_root=data_root,
@@ -212,7 +226,8 @@ data = dict(
         pipeline=test_pipeline,
         modality=input_modality,
         classes=class_names,
-        test_mode=True),
+        test_mode=True,
+        box_type_3d='LiDAR'),
     test=dict(
         type=dataset_type,
         data_root=data_root,
@@ -222,34 +237,15 @@ data = dict(
         pipeline=test_pipeline,
         modality=input_modality,
         classes=class_names,
-        test_mode=True))
+        test_mode=True,
+        box_type_3d='LiDAR'))
+
 # Training settings
-optimizer = dict(type='AdamW', lr=0.003, betas=(0.95, 0.99), weight_decay=0.01)
+optimizer = dict(weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
-lr_config = dict(
-    policy='CosineAnnealing',
-    warmup='linear',
-    warmup_iters=1000,
-    warmup_ratio=1.0 / 10,
-    min_lr_ratio=1e-5)
-momentum_config = None
-checkpoint_config = dict(interval=1)
-# yapf:disable
-log_config = dict(
-    interval=50,
-    hooks=[
-        dict(type='TextLoggerHook'),
-        dict(type='TensorboardLoggerHook')
-    ])
-# yapf:enable
-evaluation = dict(interval=1)
-# runtime settings
-total_epochs = 40
-dist_params = dict(backend='nccl')
-log_level = 'INFO'
-work_dir = None
+
+evaluation = dict(interval=1, pipeline=eval_pipeline)
+
 # You may need to download the model first is the network is unstable
 load_from = 'https://download.openmmlab.com/mmdetection3d/pretrain_models/mvx_faster_rcnn_detectron2-caffe_20e_coco-pretrain_gt-sample_kitti-3-class_moderate-79.3_20200207-a4a6a3c7.pth'  # noqa
-resume_from = None
-workflow = [('train', 1)]

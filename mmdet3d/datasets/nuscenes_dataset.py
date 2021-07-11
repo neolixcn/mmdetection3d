@@ -7,8 +7,9 @@ from os import path as osp
 
 from mmdet.datasets import DATASETS
 from ..core import show_result
-from ..core.bbox import Box3DMode, LiDARInstance3DBoxes
+from ..core.bbox import Box3DMode, Coord3DMode, LiDARInstance3DBoxes
 from .custom_3d import Custom3DDataset
+from .pipelines import Compose
 
 
 @DATASETS.register_module()
@@ -97,6 +98,14 @@ class NuScenesDataset(Custom3DDataset):
         'vehicle.parked',
         'vehicle.stopped',
     ]
+    # https://github.com/nutonomy/nuscenes-devkit/blob/57889ff20678577025326cfc24e57424a829be0a/python-sdk/nuscenes/eval/detection/evaluate.py#L222 # noqa
+    ErrNameMapping = {
+        'trans_err': 'mATE',
+        'scale_err': 'mASE',
+        'orient_err': 'mAOE',
+        'vel_err': 'mAVE',
+        'attr_err': 'mAAE'
+    }
     CLASSES = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
                'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
                'barrier')
@@ -403,6 +412,10 @@ class NuScenesDataset(Custom3DDataset):
             for k, v in metrics['label_tp_errors'][name].items():
                 val = float('{:.4f}'.format(v))
                 detail['{}/{}_{}'.format(metric_prefix, name, k)] = val
+            for k, v in metrics['tp_errors'].items():
+                val = float('{:.4f}'.format(v))
+                detail['{}/{}'.format(metric_prefix,
+                                      self.ErrNameMapping[k])] = val
 
         detail['{}/NDS'.format(metric_prefix)] = metrics['nd_score']
         detail['{}/mAP'.format(metric_prefix)] = metrics['mean_ap']
@@ -434,9 +447,16 @@ class NuScenesDataset(Custom3DDataset):
         else:
             tmp_dir = None
 
-        if not isinstance(results[0], dict):
+        # currently the output prediction results could be in two formats
+        # 1. list of dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...)
+        # 2. list of dict('pts_bbox' or 'img_bbox':
+        #     dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...))
+        # this is a workaround to enable evaluation of both formats on nuScenes
+        # refer to https://github.com/open-mmlab/mmdetection3d/issues/449
+        if not ('pts_bbox' in results[0] or 'img_bbox' in results[0]):
             result_files = self._format_bbox(results, jsonfile_prefix)
         else:
+            # should take the inner dict out of 'pts_bbox' or 'img_bbox' dict
             result_files = dict()
             for name in results[0]:
                 print(f'\nFormating bboxes of {name}')
@@ -453,7 +473,8 @@ class NuScenesDataset(Custom3DDataset):
                  jsonfile_prefix=None,
                  result_names=['pts_bbox'],
                  show=False,
-                 out_dir=None):
+                 out_dir=None,
+                 pipeline=None):
         """Evaluation in nuScenes protocol.
 
         Args:
@@ -467,6 +488,8 @@ class NuScenesDataset(Custom3DDataset):
             show (bool): Whether to visualize.
                 Default: False.
             out_dir (str): Path to save the visualization results.
+                Default: None.
+            pipeline (list[dict], optional): raw data loading for showing.
                 Default: None.
 
         Returns:
@@ -487,35 +510,61 @@ class NuScenesDataset(Custom3DDataset):
             tmp_dir.cleanup()
 
         if show:
-            self.show(results, out_dir)
+            self.show(results, out_dir, pipeline=pipeline)
         return results_dict
 
-    def show(self, results, out_dir):
+    def _build_default_pipeline(self):
+        """Build the default pipeline for this dataset."""
+        pipeline = [
+            dict(
+                type='LoadPointsFromFile',
+                coord_type='LIDAR',
+                load_dim=5,
+                use_dim=5,
+                file_client_args=dict(backend='disk')),
+            dict(
+                type='LoadPointsFromMultiSweeps',
+                sweeps_num=10,
+                file_client_args=dict(backend='disk')),
+            dict(
+                type='DefaultFormatBundle3D',
+                class_names=self.CLASSES,
+                with_label=False),
+            dict(type='Collect3D', keys=['points'])
+        ]
+        return Compose(pipeline)
+
+    def show(self, results, out_dir, show=True, pipeline=None):
         """Results visualization.
 
         Args:
             results (list[dict]): List of bounding boxes results.
             out_dir (str): Output directory of visualization result.
+            show (bool): Visualize the results online.
+            pipeline (list[dict], optional): raw data loading for showing.
+                Default: None.
         """
+        assert out_dir is not None, 'Expect out_dir, got none.'
+        pipeline = self._get_pipeline(pipeline)
         for i, result in enumerate(results):
-            example = self.prepare_test_data(i)
-            points = example['points'][0]._data.numpy()
+            if 'pts_bbox' in result.keys():
+                result = result['pts_bbox']
             data_info = self.data_infos[i]
             pts_path = data_info['lidar_path']
             file_name = osp.split(pts_path)[-1].split('.')[0]
+            points = self._extract_data(i, pipeline, 'points').numpy()
             # for now we convert points into depth mode
-            points = points[..., [1, 0, 2]]
-            points[..., 0] *= -1
-            inds = result['pts_bbox']['scores_3d'] > 0.1
-            gt_bboxes = self.get_ann_info(i)['gt_bboxes_3d'].tensor
-            gt_bboxes = Box3DMode.convert(gt_bboxes, Box3DMode.LIDAR,
-                                          Box3DMode.DEPTH)
-            gt_bboxes[..., 2] += gt_bboxes[..., 5] / 2
-            pred_bboxes = result['pts_bbox']['boxes_3d'][inds].tensor.numpy()
-            pred_bboxes = Box3DMode.convert(pred_bboxes, Box3DMode.LIDAR,
-                                            Box3DMode.DEPTH)
-            pred_bboxes[..., 2] += pred_bboxes[..., 5] / 2
-            show_result(points, gt_bboxes, pred_bboxes, out_dir, file_name)
+            points = Coord3DMode.convert_point(points, Coord3DMode.LIDAR,
+                                               Coord3DMode.DEPTH)
+            inds = result['scores_3d'] > 0.1
+            gt_bboxes = self.get_ann_info(i)['gt_bboxes_3d'].tensor.numpy()
+            show_gt_bboxes = Box3DMode.convert(gt_bboxes, Box3DMode.LIDAR,
+                                               Box3DMode.DEPTH)
+            pred_bboxes = result['boxes_3d'][inds].tensor.numpy()
+            show_pred_bboxes = Box3DMode.convert(pred_bboxes, Box3DMode.LIDAR,
+                                                 Box3DMode.DEPTH)
+            show_result(points, show_gt_bboxes, show_pred_bboxes, out_dir,
+                        file_name, show)
 
 
 def output_to_nusc_box(detection):

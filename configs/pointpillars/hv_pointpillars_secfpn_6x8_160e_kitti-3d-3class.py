@@ -21,7 +21,7 @@ db_sampler = dict(
 
 # PointPillars uses different augmentation hyper parameters
 train_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(type='ObjectSample', db_sampler=db_sampler),
     dict(
@@ -42,7 +42,7 @@ train_pipeline = [
     dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
 ]
 test_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1333, 800),
@@ -78,9 +78,10 @@ optimizer = dict(lr=lr)
 # development of the codebase thus we keep the setting. But we does not
 # specifically tune this parameter.
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
-# Use evaluation interval=2 reduce the number of evaluation timese
-evaluation = dict(interval=2)
 # PointPillars usually need longer schedule than second, we simply double
 # the training schedule. Do remind that since we use RepeatDataset and
 # repeat factor is 2, so we actually train 160 epochs.
-total_epochs = 80
+runner = dict(max_epochs=80)
+
+# Use evaluation interval=2 reduce the number of evaluation timese
+evaluation = dict(interval=2)

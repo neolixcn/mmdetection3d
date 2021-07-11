@@ -12,20 +12,20 @@ model = dict(
             ranges=[[0, -39.68, -1.78, 69.12, 39.68, -1.78]],
             sizes=[[1.6, 3.9, 1.56]],
             rotations=[0, 1.57],
-            reshape_out=True)))
-# model training and testing settings
-train_cfg = dict(
-    _delete_=True,
-    assigner=dict(
-        type='MaxIoUAssigner',
-        iou_calculator=dict(type='BboxOverlapsNearest3D'),
-        pos_iou_thr=0.6,
-        neg_iou_thr=0.45,
-        min_pos_iou=0.45,
-        ignore_iof_thr=-1),
-    allowed_border=0,
-    pos_weight=-1,
-    debug=False)
+            reshape_out=True)),
+    # model training and testing settings
+    train_cfg=dict(
+        _delete_=True,
+        assigner=dict(
+            type='MaxIoUAssigner',
+            iou_calculator=dict(type='BboxOverlapsNearest3D'),
+            pos_iou_thr=0.6,
+            neg_iou_thr=0.45,
+            min_pos_iou=0.45,
+            ignore_iof_thr=-1),
+        allowed_border=0,
+        pos_weight=-1,
+        debug=False))
 
 # dataset settings
 dataset_type = 'KittiDataset'
@@ -40,7 +40,7 @@ db_sampler = dict(
     classes=class_names)
 
 train_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(type='ObjectSample', db_sampler=db_sampler),
     dict(
@@ -61,7 +61,7 @@ train_pipeline = [
     dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
 ]
 test_pipeline = [
-    dict(type='LoadPointsFromFile', load_dim=4, use_dim=4),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1333, 800),

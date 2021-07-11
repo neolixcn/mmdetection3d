@@ -1,13 +1,13 @@
-import copy
 import mmcv
 import torch
+import warnings
 from mmcv.parallel import DataContainer as DC
+from mmcv.runner import force_fp32
 from os import path as osp
-from torch import nn as nn
 from torch.nn import functional as F
 
-from mmdet3d.core import (Box3DMode, bbox3d2result, merge_aug_bboxes_3d,
-                          show_result)
+from mmdet3d.core import (Box3DMode, Coord3DMode, bbox3d2result,
+                          merge_aug_bboxes_3d, show_result)
 from mmdet3d.ops import Voxelization
 from mmdet.core import multi_apply
 from mmdet.models import DETECTORS
@@ -33,8 +33,9 @@ class MVXTwoStageDetector(Base3DDetector):
                  img_rpn_head=None,
                  train_cfg=None,
                  test_cfg=None,
-                 pretrained=None):
-        super(MVXTwoStageDetector, self).__init__()
+                 pretrained=None,
+                 init_cfg=None):
+        super(MVXTwoStageDetector, self).__init__(init_cfg=init_cfg)
 
         if pts_voxel_layer:
             self.pts_voxel_layer = Voxelization(**pts_voxel_layer)
@@ -69,11 +70,7 @@ class MVXTwoStageDetector(Base3DDetector):
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
-        self.init_weights(pretrained=pretrained)
 
-    def init_weights(self, pretrained=None):
-        """Initialize model weights."""
-        super(MVXTwoStageDetector, self).init_weights(pretrained)
         if pretrained is None:
             img_pretrained = None
             pts_pretrained = None
@@ -83,23 +80,26 @@ class MVXTwoStageDetector(Base3DDetector):
         else:
             raise ValueError(
                 f'pretrained should be a dict, got {type(pretrained)}')
-        if self.with_img_backbone:
-            self.img_backbone.init_weights(pretrained=img_pretrained)
-        if self.with_pts_backbone:
-            self.pts_backbone.init_weights(pretrained=pts_pretrained)
-        if self.with_img_neck:
-            if isinstance(self.img_neck, nn.Sequential):
-                for m in self.img_neck:
-                    m.init_weights()
-            else:
-                self.img_neck.init_weights()
 
+        if self.with_img_backbone:
+            if img_pretrained is not None:
+                warnings.warn('DeprecationWarning: pretrained is a deprecated \
+                    key, please consider using init_cfg')
+                self.img_backbone.init_cfg = dict(
+                    type='Pretrained', checkpoint=img_pretrained)
         if self.with_img_roi_head:
-            self.img_roi_head.init_weights(img_pretrained)
-        if self.with_img_rpn:
-            self.img_rpn_head.init_weights()
-        if self.with_pts_bbox:
-            self.pts_bbox_head.init_weights()
+            if img_pretrained is not None:
+                warnings.warn('DeprecationWarning: pretrained is a deprecated \
+                    key, please consider using init_cfg')
+                self.img_roi_head.init_cfg = dict(
+                    type='Pretrained', checkpoint=img_pretrained)
+
+        if self.with_pts_backbone:
+            if img_pretrained is not None:
+                warnings.warn('DeprecationWarning: pretrained is a deprecated \
+                    key, please consider using init_cfg')
+                self.pts_backbone.init_cfg = dict(
+                    type='Pretrained', checkpoint=pts_pretrained)
 
     @property
     def with_img_shared_head(self):
@@ -169,7 +169,12 @@ class MVXTwoStageDetector(Base3DDetector):
 
     def extract_img_feat(self, img, img_metas):
         """Extract features of images."""
-        if self.with_img_backbone:
+        if self.with_img_backbone and img is not None:
+            input_shape = img.shape[-2:]
+            # update real input shape of each single img
+            for img_meta in img_metas:
+                img_meta.update(input_shape=input_shape)
+
             if img.dim() == 5 and img.size(0) == 1:
                 img.squeeze_()
             elif img.dim() == 5 and img.size(0) > 1:
@@ -203,6 +208,7 @@ class MVXTwoStageDetector(Base3DDetector):
         return (img_feats, pts_feats)
 
     @torch.no_grad()
+    @force_fp32()
     def voxelize(self, points):
         """Apply dynamic voxelization to points.
 
@@ -479,19 +485,18 @@ class MVXTwoStageDetector(Base3DDetector):
 
             assert out_dir is not None, 'Expect out_dir, got none.'
             inds = result[batch_id]['pts_bbox']['scores_3d'] > 0.1
-            pred_bboxes = copy.deepcopy(
-                result[batch_id]['pts_bbox']['boxes_3d'][inds].tensor.numpy())
-            # for now we convert points into depth mode
-            if box_mode_3d == Box3DMode.DEPTH:
-                pred_bboxes[..., 2] += pred_bboxes[..., 5] / 2
-            elif (box_mode_3d == Box3DMode.CAM) or (box_mode_3d
-                                                    == Box3DMode.LIDAR):
-                points = points[..., [1, 0, 2]]
-                points[..., 0] *= -1
+            pred_bboxes = result[batch_id]['pts_bbox']['boxes_3d'][inds]
+
+            # for now we convert points and bbox into depth mode
+            if (box_mode_3d == Box3DMode.CAM) or (box_mode_3d
+                                                  == Box3DMode.LIDAR):
+                points = Coord3DMode.convert_point(points, Coord3DMode.LIDAR,
+                                                   Coord3DMode.DEPTH)
                 pred_bboxes = Box3DMode.convert(pred_bboxes, box_mode_3d,
                                                 Box3DMode.DEPTH)
-                pred_bboxes[..., 2] += pred_bboxes[..., 5] / 2
-            else:
+            elif box_mode_3d != Box3DMode.DEPTH:
                 ValueError(
                     f'Unsupported box_mode_3d {box_mode_3d} for convertion!')
+
+            pred_bboxes = pred_bboxes.tensor.cpu().numpy()
             show_result(points, None, pred_bboxes, out_dir, file_name)

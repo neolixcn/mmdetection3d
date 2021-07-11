@@ -1,10 +1,11 @@
 import torch
 from mmcv.cnn import build_norm_layer
+from mmcv.runner import force_fp32
 from torch import nn
 
 from mmdet3d.ops import DynamicScatter
 from .. import builder
-from ..registry import VOXEL_ENCODERS
+from ..builder import VOXEL_ENCODERS
 from .utils import VFELayer, get_paddings_indicator
 
 
@@ -21,7 +22,9 @@ class HardSimpleVFE(nn.Module):
     def __init__(self, num_features=4):
         super(HardSimpleVFE, self).__init__()
         self.num_features = num_features
+        self.fp16_enabled = False
 
+    @force_fp32(out_fp16=True)
     def forward(self, features, num_points, coors):
         """Forward function.
 
@@ -58,8 +61,10 @@ class DynamicSimpleVFE(nn.Module):
                  point_cloud_range=(0, -40, -3, 70.4, 40, 1)):
         super(DynamicSimpleVFE, self).__init__()
         self.scatter = DynamicScatter(voxel_size, point_cloud_range, True)
+        self.fp16_enabled = False
 
     @torch.no_grad()
+    @force_fp32(out_fp16=True)
     def forward(self, features, coors):
         """Forward function.
 
@@ -134,6 +139,7 @@ class DynamicVFE(nn.Module):
         self._with_cluster_center = with_cluster_center
         self._with_voxel_center = with_voxel_center
         self.return_point_feats = return_point_feats
+        self.fp16_enabled = False
 
         # Need pillar (voxel) size and x/y offset in order to calculate offset
         self.vx = voxel_size[0]
@@ -157,7 +163,7 @@ class DynamicVFE(nn.Module):
                 nn.Sequential(
                     nn.Linear(in_filters, out_filters, bias=False), norm_layer,
                     nn.ReLU(inplace=True)))
-            self.vfe_layers = nn.ModuleList(vfe_layers)
+        self.vfe_layers = nn.ModuleList(vfe_layers)
         self.num_vfe = len(vfe_layers)
         self.vfe_scatter = DynamicScatter(voxel_size, point_cloud_range,
                                           (mode != 'max'))
@@ -209,6 +215,7 @@ class DynamicVFE(nn.Module):
         center_per_point = voxel_mean[voxel_inds, ...]
         return center_per_point
 
+    @force_fp32(out_fp16=True)
     def forward(self,
                 features,
                 coors,
@@ -330,6 +337,7 @@ class HardVFE(nn.Module):
         self._with_cluster_center = with_cluster_center
         self._with_voxel_center = with_voxel_center
         self.return_point_feats = return_point_feats
+        self.fp16_enabled = False
 
         # Need pillar (voxel) size and x/y offset to calculate pillar offset
         self.vx = voxel_size[0]
@@ -372,6 +380,7 @@ class HardVFE(nn.Module):
         if fusion_layer is not None:
             self.fusion_layer = builder.build_fusion_layer(fusion_layer)
 
+    @force_fp32(out_fp16=True)
     def forward(self,
                 features,
                 num_points,

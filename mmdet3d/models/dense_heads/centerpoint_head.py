@@ -1,7 +1,8 @@
 import copy
 import numpy as np
 import torch
-from mmcv.cnn import ConvModule, build_conv_layer, kaiming_init
+from mmcv.cnn import ConvModule, build_conv_layer
+from mmcv.runner import BaseModule, force_fp32
 from torch import nn
 
 from mmdet3d.core import (circle_nms, draw_heatmap_gaussian, gaussian_radius,
@@ -14,7 +15,7 @@ from mmdet.core import build_bbox_coder, multi_apply
 
 
 @HEADS.register_module()
-class SeparateHead(nn.Module):
+class SeparateHead(BaseModule):
     """SeparateHead for CenterHead.
 
     Args:
@@ -41,19 +42,22 @@ class SeparateHead(nn.Module):
                  conv_cfg=dict(type='Conv2d'),
                  norm_cfg=dict(type='BN2d'),
                  bias='auto',
+                 init_cfg=None,
                  **kwargs):
-        super(SeparateHead, self).__init__()
-
+        assert init_cfg is None, 'To prevent abnormal initialization ' \
+            'behavior, init_cfg is not allowed to be set'
+        super(SeparateHead, self).__init__(init_cfg=init_cfg)
         self.heads = heads
         self.init_bias = init_bias
         for head in self.heads:
             classes, num_conv = self.heads[head]
 
             conv_layers = []
+            c_in = in_channels
             for i in range(num_conv - 1):
                 conv_layers.append(
                     ConvModule(
-                        in_channels,
+                        c_in,
                         head_conv,
                         kernel_size=final_kernel,
                         stride=1,
@@ -61,6 +65,7 @@ class SeparateHead(nn.Module):
                         bias=bias,
                         conv_cfg=conv_cfg,
                         norm_cfg=norm_cfg))
+                c_in = head_conv
 
             conv_layers.append(
                 build_conv_layer(
@@ -75,15 +80,15 @@ class SeparateHead(nn.Module):
 
             self.__setattr__(head, conv_layers)
 
+            if init_cfg is None:
+                self.init_cfg = dict(type='Kaiming', layer='Conv2d')
+
     def init_weights(self):
         """Initialize weights."""
+        super().init_weights()
         for head in self.heads:
             if head == 'heatmap':
                 self.__getattr__(head)[-1].bias.data.fill_(self.init_bias)
-            else:
-                for m in self.__getattr__(head).modules():
-                    if isinstance(m, nn.Conv2d):
-                        kaiming_init(m)
 
     def forward(self, x):
         """Forward function for SepHead.
@@ -116,8 +121,8 @@ class SeparateHead(nn.Module):
 
 
 @HEADS.register_module()
-class DCNSeperateHead(nn.Module):
-    r"""DCNSeperateHead for CenterHead.
+class DCNSeparateHead(BaseModule):
+    r"""DCNSeparateHead for CenterHead.
 
     .. code-block:: none
             /-----> DCN for heatmap task -----> heatmap task.
@@ -151,8 +156,11 @@ class DCNSeperateHead(nn.Module):
                  conv_cfg=dict(type='Conv2d'),
                  norm_cfg=dict(type='BN2d'),
                  bias='auto',
+                 init_cfg=None,
                  **kwargs):
-        super(DCNSeperateHead, self).__init__()
+        assert init_cfg is None, 'To prevent abnormal initialization ' \
+            'behavior, init_cfg is not allowed to be set'
+        super(DCNSeparateHead, self).__init__(init_cfg=init_cfg)
         if 'heatmap' in heads:
             heads.pop('heatmap')
         # feature adaptation with dcn
@@ -189,11 +197,13 @@ class DCNSeperateHead(nn.Module):
             head_conv=head_conv,
             final_kernel=final_kernel,
             bias=bias)
+        if init_cfg is None:
+            self.init_cfg = dict(type='Kaiming', layer='Conv2d')
 
     def init_weights(self):
         """Initialize weights."""
+        super().init_weights()
         self.cls_head[-1].bias.data.fill_(self.init_bias)
-        self.task_head.init_weights()
 
     def forward(self, x):
         """Forward function for DCNSepHead.
@@ -228,8 +238,8 @@ class DCNSeperateHead(nn.Module):
         return ret
 
 
-@HEADS.register_module
-class CenterHead(nn.Module):
+@HEADS.register_module()
+class CenterHead(BaseModule):
     """CenterHead for CenterPoint.
 
     Args:
@@ -247,7 +257,7 @@ class CenterHead(nn.Module):
             Default: dict(type='GaussianFocalLoss', reduction='mean').
         loss_bbox (dict): Config of regression loss function.
             Default: dict(type='L1Loss', reduction='none').
-        seperate_head (dict): Config of seperate head. Default: dict(
+        separate_head (dict): Config of separate head. Default: dict(
             type='SeparateHead', init_bias=-2.19, final_kernel=3)
         share_conv_channel (int): Output channels for share_conv_layer.
             Default: 64.
@@ -270,15 +280,18 @@ class CenterHead(nn.Module):
                  loss_cls=dict(type='GaussianFocalLoss', reduction='mean'),
                  loss_bbox=dict(
                      type='L1Loss', reduction='none', loss_weight=0.25),
-                 seperate_head=dict(
+                 separate_head=dict(
                      type='SeparateHead', init_bias=-2.19, final_kernel=3),
                  share_conv_channel=64,
                  num_heatmap_convs=2,
                  conv_cfg=dict(type='Conv2d'),
                  norm_cfg=dict(type='BN2d'),
                  bias='auto',
-                 norm_bbox=True):
-        super(CenterHead, self).__init__()
+                 norm_bbox=True,
+                 init_cfg=None):
+        assert init_cfg is None, 'To prevent abnormal initialization ' \
+            'behavior, init_cfg is not allowed to be set'
+        super(CenterHead, self).__init__(init_cfg=init_cfg)
 
         num_classes = [len(t['class_names']) for t in tasks]
         self.class_names = [t['class_names'] for t in tasks]
@@ -292,6 +305,7 @@ class CenterHead(nn.Module):
         self.loss_bbox = build_loss(loss_bbox)
         self.bbox_coder = build_bbox_coder(bbox_coder)
         self.num_anchor_per_locs = [n for n in num_classes]
+        self.fp16_enabled = False
 
         # a shared convolution
         self.shared_conv = ConvModule(
@@ -308,14 +322,9 @@ class CenterHead(nn.Module):
         for num_cls in num_classes:
             heads = copy.deepcopy(common_heads)
             heads.update(dict(heatmap=(num_cls, num_heatmap_convs)))
-            seperate_head.update(
+            separate_head.update(
                 in_channels=share_conv_channel, heads=heads, num_cls=num_cls)
-            self.task_heads.append(builder.build_head(seperate_head))
-
-    def init_weights(self):
-        """Initialize weights."""
-        for task_head in self.task_heads:
-            task_head.init_weights()
+            self.task_heads.append(builder.build_head(separate_head))
 
     def forward_single(self, x):
         """Forward function for CenterPoint.
@@ -548,6 +557,7 @@ class CenterHead(nn.Module):
             inds.append(ind)
         return heatmaps, anno_boxes, inds, masks
 
+    @force_fp32(apply_to=('preds_dicts'))
     def loss(self, gt_bboxes_3d, gt_labels_3d, preds_dicts, **kwargs):
         """Loss function for CenterHead.
 
@@ -687,7 +697,7 @@ class CenterHead(nn.Module):
                     for j, num_class in enumerate(self.num_classes):
                         rets[j][i][k] += flag
                         flag += num_class
-                    labels = torch.cat([ret[i][k] for ret in rets])
+                    labels = torch.cat([ret[i][k].int() for ret in rets])
             ret_list.append([bboxes, scores, labels])
         return ret_list
 
@@ -760,9 +770,9 @@ class CenterHead(nn.Module):
                 selected = nms_gpu(
                     boxes_for_nms,
                     top_scores,
-                    thresh=self.test_cfg['nms_iou_threshold'],
-                    pre_maxsize=self.test_cfg['nms_pre_max_size'],
-                    post_max_size=self.test_cfg['nms_post_max_size'])
+                    thresh=self.test_cfg['nms_thr'],
+                    pre_maxsize=self.test_cfg['pre_max_size'],
+                    post_max_size=self.test_cfg['post_max_size'])
             else:
                 selected = []
 

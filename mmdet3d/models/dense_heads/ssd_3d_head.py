@@ -1,5 +1,7 @@
+import numpy as np
 import torch
 from mmcv.ops.nms import batched_nms
+from mmcv.runner import force_fp32
 from torch.nn import functional as F
 
 from mmdet3d.core.bbox.structures import (DepthInstance3DBoxes,
@@ -56,7 +58,8 @@ class SSD3DHead(VoteHead):
                  dir_res_loss=None,
                  size_res_loss=None,
                  corner_loss=None,
-                 vote_loss=None):
+                 vote_loss=None,
+                 init_cfg=None):
         super(SSD3DHead, self).__init__(
             num_classes,
             bbox_coder,
@@ -73,7 +76,8 @@ class SSD3DHead(VoteHead):
             dir_res_loss=dir_res_loss,
             size_class_loss=None,
             size_res_loss=size_res_loss,
-            semantic_loss=None)
+            semantic_loss=None,
+            init_cfg=init_cfg)
 
         self.corner_loss = build_loss(corner_loss)
         self.vote_loss = build_loss(vote_loss)
@@ -108,6 +112,7 @@ class SSD3DHead(VoteHead):
 
         return seed_points, seed_features, seed_indices
 
+    @force_fp32(apply_to=('bbox_preds', ))
     def loss(self,
              bbox_preds,
              points,
@@ -333,6 +338,30 @@ class SSD3DHead(VoteHead):
         valid_gt = gt_labels_3d != -1
         gt_bboxes_3d = gt_bboxes_3d[valid_gt]
         gt_labels_3d = gt_labels_3d[valid_gt]
+
+        # Generate fake GT for empty scene
+        if valid_gt.sum() == 0:
+            vote_targets = points.new_zeros(self.num_candidates, 3)
+            center_targets = points.new_zeros(self.num_candidates, 3)
+            size_res_targets = points.new_zeros(self.num_candidates, 3)
+            dir_class_targets = points.new_zeros(
+                self.num_candidates, dtype=torch.int64)
+            dir_res_targets = points.new_zeros(self.num_candidates)
+            mask_targets = points.new_zeros(
+                self.num_candidates, dtype=torch.int64)
+            centerness_targets = points.new_zeros(self.num_candidates,
+                                                  self.num_classes)
+            corner3d_targets = points.new_zeros(self.num_candidates, 8, 3)
+            vote_mask = points.new_zeros(self.num_candidates, dtype=torch.bool)
+            positive_mask = points.new_zeros(
+                self.num_candidates, dtype=torch.bool)
+            negative_mask = points.new_ones(
+                self.num_candidates, dtype=torch.bool)
+            return (vote_targets, center_targets, size_res_targets,
+                    dir_class_targets, dir_res_targets, mask_targets,
+                    centerness_targets, corner3d_targets, vote_mask,
+                    positive_mask, negative_mask)
+
         gt_corner3d = gt_bboxes_3d.corners
 
         (center_targets, size_targets, dir_class_targets,
@@ -434,6 +463,9 @@ class SSD3DHead(VoteHead):
             bbox_selected, score_selected, labels = self.multiclass_nms_single(
                 obj_scores[b], sem_scores[b], bbox3d[b], points[b, ..., :3],
                 input_metas[b])
+            # fix the wrong direction
+            # To do: remove this ops
+            bbox_selected[..., 6] += np.pi
             bbox = input_metas[b]['box_type_3d'](
                 bbox_selected.clone(),
                 box_dim=bbox_selected.shape[-1],
@@ -461,7 +493,7 @@ class SSD3DHead(VoteHead):
             bbox.clone(),
             box_dim=bbox.shape[-1],
             with_yaw=self.bbox_coder.with_rot,
-            origin=(0.5, 0.5, 1.0))
+            origin=(0.5, 0.5, 0.5))
 
         if isinstance(bbox, LiDARInstance3DBoxes):
             box_idx = bbox.points_in_boxes(points)
@@ -493,7 +525,8 @@ class SSD3DHead(VoteHead):
 
         # filter empty boxes and boxes with low score
         scores_mask = (obj_scores >= self.test_cfg.score_thr)
-        nonempty_box_inds = torch.nonzero(nonempty_box_mask).flatten()
+        nonempty_box_inds = torch.nonzero(
+            nonempty_box_mask, as_tuple=False).flatten()
         nonempty_mask = torch.zeros_like(bbox_classes).scatter(
             0, nonempty_box_inds[nms_selected], 1)
         selected = (nonempty_mask.bool() & scores_mask.bool())

@@ -7,22 +7,21 @@ from .single_stage import SingleStage3DDetector
 
 @DETECTORS.register_module()
 class VoteNet(SingleStage3DDetector):
-    """VoteNet model.
-
-    https://arxiv.org/pdf/1904.09664.pdf
-    """
+    r"""`VoteNet <https://arxiv.org/pdf/1904.09664.pdf>`_ for 3D detection."""
 
     def __init__(self,
                  backbone,
                  bbox_head=None,
                  train_cfg=None,
                  test_cfg=None,
+                 init_cfg=None,
                  pretrained=None):
         super(VoteNet, self).__init__(
             backbone=backbone,
             bbox_head=bbox_head,
             train_cfg=train_cfg,
             test_cfg=test_cfg,
+            init_cfg=None,
             pretrained=pretrained)
 
     def forward_train(self,

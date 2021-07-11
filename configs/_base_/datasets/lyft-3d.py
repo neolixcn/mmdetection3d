@@ -29,6 +29,7 @@ file_client_args = dict(backend='disk')
 train_pipeline = [
     dict(
         type='LoadPointsFromFile',
+        coord_type='LIDAR',
         load_dim=5,
         use_dim=5,
         file_client_args=file_client_args),
@@ -52,6 +53,7 @@ train_pipeline = [
 test_pipeline = [
     dict(
         type='LoadPointsFromFile',
+        coord_type='LIDAR',
         load_dim=5,
         use_dim=5,
         file_client_args=file_client_args),
@@ -79,6 +81,25 @@ test_pipeline = [
                 with_label=False),
             dict(type='Collect3D', keys=['points'])
         ])
+]
+# construct a pipeline for data and gt loading in show function
+# please keep its loading function consistent with test_pipeline (e.g. client)
+eval_pipeline = [
+    dict(
+        type='LoadPointsFromFile',
+        coord_type='LIDAR',
+        load_dim=5,
+        use_dim=5,
+        file_client_args=file_client_args),
+    dict(
+        type='LoadPointsFromMultiSweeps',
+        sweeps_num=10,
+        file_client_args=file_client_args),
+    dict(
+        type='DefaultFormatBundle3D',
+        class_names=class_names,
+        with_label=False),
+    dict(type='Collect3D', keys=['points'])
 ]
 
 data = dict(
@@ -112,4 +133,4 @@ data = dict(
 # Since the models are trained by 24 epochs by default, we set evaluation
 # interval to be 24. Please change the interval accordingly if you do not
 # use a default schedule.
-evaluation = dict(interval=24)
+evaluation = dict(interval=24, pipeline=eval_pipeline)

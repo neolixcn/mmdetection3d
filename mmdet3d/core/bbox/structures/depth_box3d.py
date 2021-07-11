@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from mmdet3d.core.points import BasePoints
 from mmdet3d.ops import points_in_boxes_batch
 from .base_box3d import BaseInstance3DBoxes
 from .utils import limit_period, rotation_3d_in_axis
@@ -13,7 +14,7 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
 
     .. code-block:: none
 
-                    up z    y front (yaw=0.5*pi)
+                    up z    y front (yaw=-0.5*pi)
                        ^   ^
                        |  /
                        | /
@@ -21,8 +22,13 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
 
     The relative coordinate of bottom center in a Depth box is (0.5, 0.5, 0),
     and the yaw is around the z axis, thus the rotation axis=2.
-    The yaw is 0 at the positive direction of x axis, and increases from
+    The yaw is 0 at the positive direction of x axis, and decreases from
     the positive direction of x to the positive direction of y.
+    Also note that rotation of DepthInstance3DBoxes is counterclockwise,
+    which is reverse to the definition of the yaw angle (clockwise).
+
+    A refactor is ongoing to make the three coordinate systems
+    easier to understand and convert between each other.
 
     Attributes:
         tensor (torch.Tensor): Float matrix of N x box_dim.
@@ -110,12 +116,14 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
         return bev_boxes
 
     def rotate(self, angle, points=None):
-        """Rotate boxes with points (optional) with the given angle.
+        """Rotate boxes with points (optional) with the given angle or \
+        rotation matrix.
 
         Args:
-            angle (float, torch.Tensor): Rotation angle.
-            points (torch.Tensor, numpy.ndarray, optional): Points to rotate.
-                Defaults to None.
+            angle (float | torch.Tensor | np.ndarray):
+                Rotation angle or rotation matrix.
+            points (torch.Tensor, numpy.ndarray, :obj:`BasePoints`, optional):
+                Points to rotate. Defaults to None.
 
         Returns:
             tuple or None: When ``points`` is None, the function returns \
@@ -124,11 +132,21 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
         """
         if not isinstance(angle, torch.Tensor):
             angle = self.tensor.new_tensor(angle)
-        rot_sin = torch.sin(angle)
-        rot_cos = torch.cos(angle)
-        rot_mat_T = self.tensor.new_tensor([[rot_cos, -rot_sin, 0],
-                                            [rot_sin, rot_cos, 0], [0, 0,
-                                                                    1]]).T
+        assert angle.shape == torch.Size([3, 3]) or angle.numel() == 1, \
+            f'invalid rotation angle shape {angle.shape}'
+
+        if angle.numel() == 1:
+            rot_sin = torch.sin(angle)
+            rot_cos = torch.cos(angle)
+            rot_mat_T = self.tensor.new_tensor([[rot_cos, -rot_sin, 0],
+                                                [rot_sin, rot_cos, 0],
+                                                [0, 0, 1]]).T
+        else:
+            rot_mat_T = angle.T
+            rot_sin = rot_mat_T[0, 1]
+            rot_cos = rot_mat_T[0, 0]
+            angle = np.arctan2(rot_sin, rot_cos)
+
         self.tensor[:, 0:3] = self.tensor[:, 0:3] @ rot_mat_T
         if self.with_yaw:
             self.tensor[:, 6] -= angle
@@ -148,6 +166,9 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
             elif isinstance(points, np.ndarray):
                 rot_mat_T = rot_mat_T.numpy()
                 points[:, :3] = np.dot(points[:, :3], rot_mat_T)
+            elif isinstance(points, BasePoints):
+                # anti-clockwise
+                points.rotate(angle)
             else:
                 raise ValueError
             return points, rot_mat_T
@@ -159,8 +180,8 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
 
         Args:
             bev_direction (str): Flip direction (horizontal or vertical).
-            points (torch.Tensor, numpy.ndarray, None): Points to flip.
-                Defaults to None.
+            points (torch.Tensor, numpy.ndarray, :obj:`BasePoints`, None):
+                Points to flip. Defaults to None.
 
         Returns:
             torch.Tensor, numpy.ndarray or None: Flipped points.
@@ -176,11 +197,14 @@ class DepthInstance3DBoxes(BaseInstance3DBoxes):
                 self.tensor[:, 6] = -self.tensor[:, 6]
 
         if points is not None:
-            assert isinstance(points, (torch.Tensor, np.ndarray))
-            if bev_direction == 'horizontal':
-                points[:, 0] = -points[:, 0]
-            elif bev_direction == 'vertical':
-                points[:, 1] = -points[:, 1]
+            assert isinstance(points, (torch.Tensor, np.ndarray, BasePoints))
+            if isinstance(points, (torch.Tensor, np.ndarray)):
+                if bev_direction == 'horizontal':
+                    points[:, 0] = -points[:, 0]
+                elif bev_direction == 'vertical':
+                    points[:, 1] = -points[:, 1]
+            elif isinstance(points, BasePoints):
+                points.flip(bev_direction)
             return points
 
     def in_range_bev(self, box_range):

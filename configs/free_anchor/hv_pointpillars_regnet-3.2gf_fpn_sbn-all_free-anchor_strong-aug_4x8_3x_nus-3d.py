@@ -37,6 +37,7 @@ file_client_args = dict(
 train_pipeline = [
     dict(
         type='LoadPointsFromFile',
+        coord_type='LIDAR',
         load_dim=5,
         use_dim=5,
         file_client_args=file_client_args),
@@ -64,5 +65,5 @@ train_pipeline = [
 
 data = dict(train=dict(pipeline=train_pipeline))
 lr_config = dict(step=[28, 34])
+runner = dict(max_epochs=36)
 evaluation = dict(interval=36)
-total_epochs = 36

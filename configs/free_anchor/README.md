@@ -2,6 +2,8 @@
 
 ## Introduction
 
+<!-- [ALGORITHM] -->
+
 We implement FreeAnchor in 3D detection systems and provide their first results with PointPillars on nuScenes dataset.
 With the implemented `FreeAnchor3DHead`, a PointPillar detector with a big backbone (e.g., RegNet-3.2GF) achieves top performance
 on the nuScenes benchmark.
@@ -68,10 +70,10 @@ model = dict(
             loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=0.8),
         loss_dir=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
-# model training and testing settings
-train_cfg = dict(
-    pts=dict(code_weight=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.25, 0.25]))
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)),
+    # model training and testing settings
+    train_cfg = dict(
+        pts=dict(code_weight=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.25, 0.25])))
 ```
 
 ## Results
